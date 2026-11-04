@@ -676,7 +676,7 @@ const csv=rows=>'﻿'+rows.map(r=>r.map(v=>{v=String(v==null?'':v);return /[",\r
 async function saveFile(name,data){
   if(!dl){toast('ذخیره فایل در این نمایش ممکن نیست.');return false;}
   try{await dl.save({filename:name,data:data});toast('فایل آماده شد');return true;}
-  catch(e){if(!(e&&e.code==='declined'))toast('ذخیره فایل انجام نشد.');return false;}
+  catch(e){if(!(e&&e.code==='declined'))showText(name,data,e);return false;}
 }
 const stamp=()=>fmtEn(todayIso()).replace(/\//g,'-');
 function expDebtors(){
@@ -830,13 +830,49 @@ async function impRead(file){
   },true);
 }
 
+/* ================= native helpers (Android app) ================= */
+function isNative(){const c=window.Capacitor;return !!(c&&c.isNativePlatform&&c.isNativePlatform());}
+function nat(name){
+  const c=window.Capacitor;if(!c)return null;
+  if(c.Plugins&&c.Plugins[name])return c.Plugins[name];
+  if(c.registerPlugin){try{return c.registerPlugin(name);}catch(e){}}
+  return null;
+}
+function showText(name,text,err){
+  const o=document.createElement('div');o.className='ov';
+  const why=err&&err.message?' ('+esc(String(err.message).slice(0,90))+')':'';
+  o.innerHTML='<div class="sheet" role="dialog" aria-modal="true" aria-label="کپی فایل"><div class="sh"><b>'+esc(name)+'</b><button class="ib" data-x="close" aria-label="بستن">'+IC.x+'</button></div><p class="hint">ذخیره مستقیم فایل ممکن نشد'+why+'. متن زیر را کپی کنید و در یک یادداشت یا پیام ذخیره (مثلاً Saved Messages تلگرام) نگه دارید. برای بازیابی، متن را در یک فایل متنی ذخیره و از «بازیابی از پشتیبان» انتخاب کنید.</p><textarea id="stx" readonly style="min-height:160px;direction:ltr;text-align:left;font-size:12px"></textarea><button class="btn pri" data-x="copy">کپی همه</button></div>';
+  document.body.appendChild(o);
+  const ta=$('#stx',o);ta.value=text;
+  o.addEventListener('click',e=>{
+    if(e.target===o||e.target.closest('[data-x=close]')){o.remove();return;}
+    if(e.target.closest('[data-x=copy]')){
+      ta.focus();ta.select();let ok=false;
+      try{ok=document.execCommand('copy');}catch(x){}
+      if(ok)toast('کپی شد');
+      else{try{navigator.clipboard.writeText(text).then(()=>toast('کپی شد'),()=>toast('متن انتخاب شد؛ آن را کپی کنید'));}catch(x){toast('متن انتخاب شد؛ آن را کپی کنید');}}
+    }
+  });
+}
+function hookNativeBack(){
+  const AP=nat('App');if(!AP||!AP.addListener)return;
+  AP.addListener('backButton',()=>{
+    const ovs=$$('.ov');
+    if(ovs.length){ovs[ovs.length-1].remove();return;}
+    if(stack.length){fromPop=true;back();fromPop=false;return;}
+    if(view.n!=='home'){tab('home');return;}
+    if(AP.exitApp)AP.exitApp();
+  });
+}
+
 /* ================= boot ================= */
 (async function boot(){
   render();
   dl={async save(o){
     const cap=window.Capacitor;
     if(cap&&cap.isNativePlatform&&cap.isNativePlatform()){
-      const FS=cap.registerPlugin('Filesystem'),SH=cap.registerPlugin('Share');
+      const FS=nat('Filesystem'),SH=nat('Share');
+      if(!FS||!SH)throw new Error('افزونه ذخیره فایل در دسترس نیست');
       const w=await FS.writeFile({path:o.filename,data:o.data,directory:'CACHE',encoding:'utf8'});
       try{await SH.share({title:o.filename,url:w.uri,dialogTitle:'ذخیره یا ارسال فایل'});}
       catch(e){if(/cancel/i.test(String(e&&e.message)))throw{code:'declined'};throw e;}
@@ -849,7 +885,8 @@ async function impRead(file){
     setTimeout(()=>{a.remove();URL.revokeObjectURL(url);},5000);
   }};
   const f=document.createElement('input');
-  f.type='file';f.id='impfile';f.accept='.json,application/json';f.hidden=true;
+  f.type='file';f.id='impfile';f.accept='.json,.txt,application/json,text/plain';f.hidden=true;
+  if(isNative())hookNativeBack();
   document.body.appendChild(f);
   f.addEventListener('change',()=>{if(f.files&&f.files[0])impRead(f.files[0]);});
   try{db=await createLocalDB();}catch(e){S.nodb=true;render();return;}
